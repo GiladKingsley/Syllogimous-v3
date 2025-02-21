@@ -41,8 +41,6 @@ const storeImage = async (id, image) => {
     });
 };
 
-// js/db.js (Modified - Only the `getImage` function needs change)
-
 const getImage = async (id) => {
     const db = await initDB();
 
@@ -53,13 +51,11 @@ const getImage = async (id) => {
         const request = store.get(id);
 
         request.onsuccess = (event) => {
-            // The key change here is in onsuccess
             const result = event.target.result;
             if (result && result.value) {
-                // Return the base64 string directly; don't create a blob here
                 resolve(result.value);
             } else {
-                resolve(null); // Resolve with null if no image is found
+                resolve(null);
             }
         };
 
@@ -153,10 +149,8 @@ const getAllRRTProgress = async () => {
     return new Promise((resolve, reject) => {
         const transaction = db.transaction('RRTHistory', 'readonly');
         const store = transaction.objectStore('RRTHistory');
-        const getAll = store.getAll();
-        getAll.onsuccess = () => resolve(getAll.result);
-        getAll.onerror = () => reject(getAll.error);
+        const request = store.getAll();  // Use 'request' here, not 'getAll'.
+        request.onsuccess = () => resolve(request.result); // Use request.result
+        request.onerror = () => reject(request.error);
     });
-
-    request.onerror = () => reject(request.error);
-}
+};

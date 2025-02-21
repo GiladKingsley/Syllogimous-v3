@@ -1804,3 +1804,73 @@ table.distinction {
         padding: 0.4rem;
     }
 }
+
+.daily-progress-container {
+    position: absolute; /* Absolute positioning relative to main-view */
+    top: 0;           /* Top edge at the top of main-view */
+    left: 0;          /* Left edge at the left of main-view */
+    width: 20px;      /* Width of the progress bar */
+    height: 100%;     /* Full height of the main-view */
+    background-color: #333;
+    border-right: 1px solid #555;  /* Vertical border on the *right* */
+    z-index: 1;       /* Ensure it's above the background, but below the game */
+}
+
+.daily-progress-bar {
+    position: absolute;
+    bottom: 0;        /* Anchor to the bottom of the container */
+    left: 0;
+    width: 100%;     /* Full width of the container */
+    height: 0%;       /* Initial height (will be set by JS) */
+    background-color: #2bdef9; /* Your desired progress color */
+    transition: height 0.3s ease; /* Smooth transition */
+}
+
+/*
+.daily-progress-label {
+    position: absolute;
+    top: -25px;
+    left: 50%;
+    width: 200px;
+    transform: translateX(-50%);
+    font-size: var(--step--2);
+    font-family: monospace;
+    text-align: center;
+    white-space: nowrap;
+}
+*/
+
+/* Additional CSS to make room for the progress bar*/
+
+label.open[for="offcanvas-settings"] {
+    left: 25px; /* Increased left margin to account for the progress bar */
+    top: 0;
+    transform-origin: top left;
+    transform: rotateZ(90deg) translateY(-100%);
+}
+
+label.open[for="offcanvas-credits"] {
+    left: 25px;  /* Increased left margin to account for the progress bar */
+    bottom: 0;
+    transform-origin: bottom left;
+    transform: rotateZ(90deg) translateX(calc(-100% - 1rem));
+}
+
+/* You may need to adjust this media query for small screens */
+@media (max-width: 500px) {
+    label.open {
+      /* Other styles */
+      padding: 0.7rem; /* Reset the padding */
+      /* Other styles */
+    }
+    .daily-progress-container{
+      display: none;
+    }
+}
+
+@media (max-width: 360px) {
+    label.open {
+        padding: 0.4rem;
+        /* other styles*/
+    }
+}

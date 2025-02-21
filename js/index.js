@@ -60,6 +60,12 @@ let imagePromise = Promise.resolve();
 const keySettingMapInverse = Object.entries(keySettingMap)
     .reduce((a, b) => (a[b[1]] = b[0], a), {});
 
+// Daily Progress Bar Elements (ADDED)
+const dailyProgressBar = document.querySelector(".daily-progress-bar");
+const dailyProgressLabel = document.querySelector(".daily-progress-label");
+console.log("dailyProgressBar:", dailyProgressBar, "dailyProgressLabel:", dailyProgressLabel); // ADDED FOR DEBUGGING
+
+
 carouselBackButton.addEventListener("click", carouselBack);
 carouselNextButton.addEventListener("click", carouselNext);
 
@@ -119,8 +125,13 @@ function appStateStartup() {
     const appStateObj = getLocalStorageObj(appStateKey);
     if (appStateObj) {
         Object.assign(appState, appStateObj);
-        setLocalStorageObj(appStateKey, appState);
     }
+    if (!appState.lastProgressUpdate) {
+        //first run
+        appState.lastProgressUpdate = new Date().setHours(0,0,0,0) // Initialize to today
+    }
+
+    setLocalStorageObj(appStateKey, appState);
 }
 
 function load() {
@@ -571,6 +582,7 @@ function init() {
     displayInit();
     PROGRESS_STORE.renderCurrentProgress(question);
     renderConclusionSpoiler();
+    renderDailyProgress(); // Call the progress bar update.
     // No need to call updateCustomStyles() here, init() is not async.
     // imagePromise = imagePromise.then(() => updateCustomStyles());  REMOVE THIS
 }
@@ -692,6 +704,58 @@ function getCurrentProfileName() {
     return "Default";
 }
 
+async function renderDailyProgress() {
+    const data = await getAllRRTProgress();
+    const profile = PROFILE_STORE.current();
+    if (!profile || !savedata.autoProgression) {
+      dailyProgressBar.style.height = "0%";
+      // dailyProgressLabel.textContent = "Daily Goal Off" // Removed
+      return;
+    }
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()); // Midnight today
+
+    if (!appState.lastProgressUpdate || new Date(appState.lastProgressUpdate) < today) {
+        // It's a new day! Reset data.
+        appState.lastProgressUpdate = today.getTime();
+        save();
+        console.log("Daily progress reset.");
+    }
+
+    const totalSecondsToday = calculateDailyProgress(data);
+    const goalSeconds = savedata.autoProgressionGoal * 60;  // Convert goal minutes to seconds.
+    const progressPercent = Math.min(100, (totalSecondsToday / goalSeconds) * 100);
+
+    dailyProgressBar.style.height = `${progressPercent}%`;
+    // dailyProgressLabel.textContent = `${Math.floor(totalSecondsToday / 60)} / ${savedata.autoProgressionGoal} min`;  //Removed
+}
+
+
+function calculateDailyProgress(data) {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const today = `${year}-${month}-${day}`;
+
+    let totalTimeToday = 0;  // In seconds
+    for (const question of data) {
+        if (question.timerWasRunning && question.timestamp) {
+            const qDate = new Date(question.timestamp);
+            const qYear = qDate.getFullYear();
+            const qMonth = String(qDate.getMonth() + 1).padStart(2, '0');
+            const qDay = String(qDate.getDate()).padStart(2, '0');
+            const questionDay = `${qYear}-${qMonth}-${qDay}`;
+
+            if (questionDay === today) {
+                totalTimeToday += question.timeElapsed / 1000; // Convert to seconds
+            }
+        }
+    }
+
+    return totalTimeToday;
+}
+
 function storeQuestionAndSave() {
     question.timerWasRunning = timerRunning;
     question.profileName = getCurrentProfileName();
@@ -701,6 +765,7 @@ function storeQuestionAndSave() {
         PROGRESS_STORE.storeCompletedQuestion(question)
     }
     save();
+    renderDailyProgress(); // Call the progress bar update.
 }
 
 function checkIfTrue() {
@@ -1003,7 +1068,8 @@ function handleKeyPress(event) {
             break;
         case "KeyK":
         case "Digit2":
-        case "ArrowRight":
+            
+      case "ArrowRight":
             checkIfFalse();
             break;
         case "Space":
@@ -1180,10 +1246,77 @@ function exportHistoryToCSV() {
     URL.revokeObjectURL(url); // release the object URL
 }
 
-document.addEventListener("keydown", handleKeyPress);
+// Daily Progress Render Function (ADD THIS FUNCTION)
+async function renderDailyProgress() {
+    try {
+        const data = await getAllRRTProgress();
+        // Check if data is null or empty
+        if (!data) {
+            console.warn("No progress data found."); // Helpful for debugging
+            dailyProgressBar.style.height = "0%";
+            dailyProgressLabel.textContent = "No Data"; // Indicate no data
+            return;
+        }
 
-registerEventHandlers();
-load();
-switchButtons();
-init();
-updateCustomStyles();
+        const profile = PROFILE_STORE.current();
+        if (!profile || !savedata.autoProgression) {
+            dailyProgressBar.style.height = "0%";
+            dailyProgressLabel.textContent = "Daily Goal Off";
+            return;
+        }
+        const now = new Date();
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()); // Midnight today
+
+        if (!appState.lastProgressUpdate || new Date(appState.lastProgressUpdate) < today) {
+            // It's a new day! Reset data.
+            appState.lastProgressUpdate = today.getTime();
+            save();
+            console.log("Daily progress reset.");
+        }
+
+        const totalSecondsToday = calculateDailyProgress(data);
+        const goalSeconds = savedata.autoProgressionGoal * 60;  // Convert goal minutes to seconds.
+        const progressPercent = Math.min(100, (totalSecondsToday / goalSeconds) * 100);
+
+        dailyProgressBar.style.height = `${progressPercent}%`;
+        dailyProgressLabel.textContent = `${Math.floor(totalSecondsToday / 60)} / ${savedata.autoProgressionGoal} min`;
+    } catch (error) {
+        console.error("Error in renderDailyProgress:", error);
+        dailyProgressBar.style.height = "0%";
+        dailyProgressLabel.textContent = "Error"; // Indicate an error
+    }
+}
+
+function calculateDailyProgress(data) {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const today = `${year}-${month}-${day}`;
+
+    let totalTimeToday = 0;  // In seconds
+    for (const question of data) {
+        if (question.timerWasRunning && question.timestamp) {
+            const qDate = new Date(question.timestamp);
+            const qYear = qDate.getFullYear();
+            const qMonth = String(qDate.getMonth() + 1).padStart(2, '0');
+            const qDay = String(qDate.getDate()).padStart(2, '0');
+            const questionDay = `${qYear}-${qMonth}-${qDay}`;
+
+            if (questionDay === today) {
+                totalTimeToday += question.timeElapsed / 1000; // Convert to seconds
+            }
+        }
+    }
+
+    return totalTimeToday;
+}
+
+// Listen for the content to load then initialize the app - new order, load before init (fixes a profile loading bug);
+
+document.addEventListener("DOMContentLoaded", () => {
+   load();
+   switchButtons();
+   init();
+   updateCustomStyles();
+});
