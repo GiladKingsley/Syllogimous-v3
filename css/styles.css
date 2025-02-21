@@ -1806,64 +1806,85 @@ table.distinction {
 }
 
 .daily-progress-container {
-    position: absolute; /* Absolute positioning relative to main-view */
-    top: 0;           /* Top edge at the top of main-view */
-    left: 0;          /* Left edge at the left of main-view */
-    width: 20px;      /* Width of the progress bar */
-    height: 100%;     /* Full height of the main-view */
+    position: absolute; /* Absolute positioning */
+    top: 0;
+    left: 0;         /* Anchored to the left edge of main-view */
+    width: 20px;
+    height: 100%;    /* Full height of main-view */
     background-color: #333;
-    border-right: 1px solid #555;  /* Vertical border on the *right* */
-    z-index: 1;       /* Ensure it's above the background, but below the game */
+    border-right: 1px solid #555; /* Border on the right */
+    z-index: 1;      /* Above background, below game content */
 }
 
 .daily-progress-bar {
     position: absolute;
-    bottom: 0;        /* Anchor to the bottom of the container */
+    bottom: 0;
     left: 0;
-    width: 100%;     /* Full width of the container */
-    height: 0%;       /* Initial height (will be set by JS) */
-    background-color: #2bdef9; /* Your desired progress color */
-    transition: height 0.3s ease; /* Smooth transition */
+    width: 100%;
+    height: 0%; /* Controlled by JavaScript */
+    background-color: #2bdef9;
+    transition: height 0.3s ease;
 }
 
-/*
-.daily-progress-label {
+/* REMOVE the .daily-progress-label rule entirely. */
+
+.weekly-progress-container {
+    position: absolute; /* Absolute positioning */
+    top: 0;
+    right: 0;        /* Anchored to the *right* edge of main-view */
+    width: 20px;
+    height: 100%;
+    background-color: #333;
+    border-left: 1px solid #555; /* Border on the *left* */
+    z-index: 1;
+}
+
+.weekly-progress-bar {
     position: absolute;
-    top: -25px;
-    left: 50%;
-    width: 200px;
-    transform: translateX(-50%);
-    font-size: var(--step--2);
-    font-family: monospace;
-    text-align: center;
-    white-space: nowrap;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 0%; /* Controlled by JavaScript */
+    background-color: #4aa39a; /* Different color for weekly */
+    transition: height 0.3s ease;
 }
-*/
 
-/* Additional CSS to make room for the progress bar*/
+/* REMOVE the .weekly-progress-label rule entirely. */
 
+
+/* Adjust positioning of sidebar labels */
 label.open[for="offcanvas-settings"] {
-    left: 25px; /* Increased left margin to account for the progress bar */
+    left: 25px; /*  space for the daily bar*/
     top: 0;
     transform-origin: top left;
     transform: rotateZ(90deg) translateY(-100%);
 }
 
 label.open[for="offcanvas-credits"] {
-    left: 25px;  /* Increased left margin to account for the progress bar */
+    left: 25px;  /* space for the daily bar */
     bottom: 0;
     transform-origin: bottom left;
     transform: rotateZ(90deg) translateX(calc(-100% - 1rem));
 }
 
-/* You may need to adjust this media query for small screens */
+/*Adjust these for the graph*/
+label.open[for="offcanvas-history"] {
+	right: 25px;
+}
+
+label.open[for="offcanvas-graph"] {
+    right: 25px; /*  space for the weekly bar*/
+}
+
+
+/* Adjust this media query for small screens, if necessary */
 @media (max-width: 500px) {
     label.open {
       /* Other styles */
       padding: 0.7rem; /* Reset the padding */
       /* Other styles */
     }
-    .daily-progress-container{
+    .daily-progress-container, .weekly-progress-container{
       display: none;
     }
 }
