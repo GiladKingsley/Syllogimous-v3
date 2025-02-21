@@ -64,12 +64,14 @@ const keySettingMapInverse = Object.entries(keySettingMap)
 const dailyProgressBar = document.querySelector(".daily-progress-bar");
 const dailyProgressLabel = document.querySelector(".daily-progress-label");
 console.log("dailyProgressBar:", dailyProgressBar, "dailyProgressLabel:", dailyProgressLabel); // ADDED FOR DEBUGGING
-
 //Weekly progress bar elements
 const weeklyProgressBar = document.querySelector(".weekly-progress-bar");
 const weeklyProgressLabel = document.querySelector(".weekly-progress-label");
 console.log("weeklyProgressBar:", weeklyProgressBar, "weeklyProgressLabel:", weeklyProgressLabel);
 
+// Input elements for the new goals
+const dailyTimeGoalInput = document.getElementById('daily-time-goal');
+const weeklyTimeGoalInput = document.getElementById('weekly-time-goal');
 
 carouselBackButton.addEventListener("click", carouselBack);
 carouselNextButton.addEventListener("click", carouselNext);
@@ -119,6 +121,23 @@ function registerEventHandlers() {
             });
         }
     }
+    dailyTimeGoalInput.addEventListener("input", () => {
+        // Update appState directly, in SECONDS:
+        appState.dailyTimeGoal = Math.max(1, parseInt(dailyTimeGoalInput.value, 10) * 60);
+        // Also update the CURRENT PROFILE's savedata:
+        PROFILE_STORE.current().savedata.dailyTimeGoal = appState.dailyTimeGoal;
+        save();  // Save changes to appState AND profiles
+        renderDailyProgress();
+        renderWeeklyProgress();
+    });
+
+    weeklyTimeGoalInput.addEventListener("input", () => {
+        appState.weeklyTimeGoal = Math.max(1, parseInt(weeklyTimeGoalInput.value, 10) * 60);
+        PROFILE_STORE.current().savedata.weeklyTimeGoal = appState.weeklyTimeGoal; // Update savedata
+        save();
+        renderDailyProgress();
+        renderWeeklyProgress();
+    });
 }
 
 function save() {
@@ -126,22 +145,22 @@ function save() {
     setLocalStorageObj(appStateKey, appState);
 }
 
-function appStateStartup() {
-    const appStateObj = getLocalStorageObj(appStateKey);
-    if (appStateObj) {
-        Object.assign(appState, appStateObj);
-    }
-    if (!appState.lastProgressUpdate) {
+  function appStateStartup() {
+      const appStateObj = getLocalStorageObj(appStateKey);
+      if (appStateObj) {
+          // IMPORTANT: Use Object.assign to MERGE, not replace.
+          Object.assign(appState, appStateObj);
+      }
+        if (!appState.lastProgressUpdate) {
         //first run
         appState.lastProgressUpdate = new Date().setHours(0,0,0,0) // Initialize to today
     }
-
-    setLocalStorageObj(appStateKey, appState);
-}
+      setLocalStorageObj(appStateKey, appState); // Save changes
+  }
 
 function load() {
-    appStateStartup();
-    PROFILE_STORE.startup();
+  appStateStartup(); //Load in the appstate
+  PROFILE_STORE.startup();
 
     renderHQL();
     renderFolders();
@@ -171,6 +190,9 @@ function populateSettings() {
             input.value = value;
         }
     }
+  //populate the goal inputs
+  dailyTimeGoalInput.value = appState.dailyTimeGoal / 60;
+  weeklyTimeGoalInput.value = appState.weeklyTimeGoal / 60;
 
     populateLinearDropdown();
     populateAppearanceSettings();
@@ -587,7 +609,10 @@ function init() {
     displayInit();
     PROGRESS_STORE.renderCurrentProgress(question);
     renderConclusionSpoiler();
-    renderDailyProgress();   // Add this line
+    renderDailyProgress(); // Call the new progress bar functions
+    renderWeeklyProgress(); // on initialization.
+    // No need to call updateCustomStyles() here, init() is not async.
+    // imagePromise = imagePromise.then(() => updateCustomStyles());  REMOVE THIS
 }
 
 function renderConclusionSpoiler() {
@@ -707,6 +732,103 @@ function getCurrentProfileName() {
     return "Default";
 }
 
+async function renderDailyProgress() {
+    const data = await getAllRRTProgress();
+    const profile = PROFILE_STORE.current();
+    if (!profile || !savedata.autoProgression) {
+      dailyProgressBar.style.height = "0%";
+      return;
+    }
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()); // Midnight today
+
+    if (!appState.lastProgressUpdate || new Date(appState.lastProgressUpdate) < today) {
+        // It's a new day! Reset data.
+        appState.lastProgressUpdate = today.getTime();
+        save();
+        console.log("Daily progress reset.");
+    }
+
+    const totalSecondsToday = calculateDailyProgress(data);
+    const goalSeconds = appState.dailyTimeGoal; // Already in seconds
+    const progressPercent = Math.min(100, (totalSecondsToday / goalSeconds) * 100);
+
+    dailyProgressBar.style.height = `${progressPercent}%`;
+}
+
+function calculateDailyProgress(data) {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const today = `${year}-${month}-${day}`;
+
+    let totalTimeToday = 0;  // In seconds
+    for (const question of data) {
+        if (question.timerWasRunning && question.timestamp) {
+            const qDate = new Date(question.timestamp);
+            const qYear = qDate.getFullYear();
+            const qMonth = String(qDate.getMonth() + 1).padStart(2, '0');
+            const qDay = String(qDate.getDate()).padStart(2, '0');
+            const questionDay = `${qYear}-${qMonth}-${qDay}`;
+
+            if (questionDay === today) {
+                totalTimeToday += question.timeElapsed / 1000; // Convert to seconds
+            }
+        }
+    }
+
+    return totalTimeToday;
+}
+async function renderWeeklyProgress() {
+    const data = await getAllRRTProgress();
+    const profile = PROFILE_STORE.current();
+    if (!profile || !savedata.autoProgression) {
+      weeklyProgressBar.style.height = "0%";
+      return;
+    }
+    const now = new Date();
+    const startOfWeek = new Date(now); // Clone current date
+    startOfWeek.setHours(0, 0, 0, 0);   // Start of current day
+    const dayOfWeek = startOfWeek.getDay(); // 0 = Sunday, 1 = Monday, ...
+    const diff = startOfWeek.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1); // adjust when day is sunday
+    startOfWeek.setDate(diff); // First day of the week (Sunday)
+
+    // Check if the last update was before this week.
+    if (!appState.lastProgressUpdate || new Date(appState.lastProgressUpdate) < startOfWeek) {
+        appState.lastProgressUpdate = startOfWeek.getTime();  // Use start of week.
+        save();
+        console.log("Weekly progress reset.");
+    }
+    const totalSecondsThisWeek = calculateWeeklyProgress(data);
+    const goalSeconds = appState.weeklyTimeGoal;  // Use appState
+    const progressPercent = Math.min(100, (totalSecondsThisWeek / goalSeconds) * 100);
+
+    weeklyProgressBar.style.height = `${progressPercent}%`;
+}
+
+function calculateWeeklyProgress(data) {
+    const now = new Date();
+    const startOfWeek = new Date(now);
+    startOfWeek.setHours(0, 0, 0, 0);
+    startOfWeek.setDate(now.getDate() - now.getDay()); // Start of current week (Sunday)
+    const endOfWeek = new Date(startOfWeek);
+    endOfWeek.setDate(startOfWeek.getDate() + 7);
+
+
+    let totalTimeThisWeek = 0;
+    for (const question of data) {
+        if (question.timerWasRunning && question.timestamp) {
+            const qDate = new Date(question.timestamp);
+            if (qDate >= startOfWeek && qDate < endOfWeek) {
+                totalTimeThisWeek += question.timeElapsed / 1000;
+            }
+        }
+    }
+    return totalTimeThisWeek;
+}
+
+
 function storeQuestionAndSave() {
     question.timerWasRunning = timerRunning;
     question.profileName = getCurrentProfileName();
@@ -717,7 +839,7 @@ function storeQuestionAndSave() {
     }
     save();
     renderHQL(true);
-    renderDailyProgress();
+    renderDailyProgress(); // Update on every answer.
     renderWeeklyProgress();
 }
 
@@ -758,463 +880,454 @@ function checkIfFalse() {
     question.answeredAt = new Date().getTime();
     question.timeElapsed = question.answeredAt - question.startedAt;
     console.log("checkIfFalse Question before store:", question); // ADDED CONSOLE LOG
-storeQuestionAndSave();
-renderHQL(true);
-wowFeedback();
+    storeQuestionAndSave();
+    renderHQL(true);
+    wowFeedback();
 }
 
 function timeElapsed() {
-if (processingAnswer) {
-    return;
-}
-processingAnswer = true;
-appState.score--;
-question.correctness = 'missed';
-question.answerUser = undefined;
-question.answeredAt = new Date().getTime();
-question.timeElapsed = question.answeredAt - question.startedAt;
-console.log("timeElapsed Question before store:", question); // ADDED CONSOLE LOG
-storeQuestionAndSave();
-renderHQL(true);
-wowFeedback();
+    if (processingAnswer) {
+        return;
+    }
+    processingAnswer = true;
+    appState.score--;
+    question.correctness = 'missed';
+    question.answerUser = undefined;
+    question.answeredAt = new Date().getTime();
+    question.timeElapsed = question.answeredAt - question.startedAt;
+    console.log("timeElapsed Question before store:", question); // ADDED CONSOLE LOG
+    storeQuestionAndSave();
+    renderHQL(true);
+    wowFeedback();
 }
 
 function resetApp() {
-const confirmed = confirm("Are you sure?");
-if (confirmed) {
-    localStorage.removeItem(oldSettingsKey);
-    localStorage.removeItem(imageKey);
-    localStorage.removeItem(profilesKey);
-    localStorage.removeItem(selectedProfileKey);
-    localStorage.removeItem(appStateKey);
-    document.getElementById("reset-app").innerText = 'Resetting...';
-    deleteDatabase("SyllDB").then(() => {
-        window.location.reload();
-    });
-}
+    const confirmed = confirm("Are you sure?");
+    if (confirmed) {
+        localStorage.removeItem(oldSettingsKey);
+        localStorage.removeItem(imageKey);
+        localStorage.removeItem(profilesKey);
+        localStorage.removeItem(selectedProfileKey);
+        localStorage.removeItem(appStateKey);
+        document.getElementById("reset-app").innerText = 'Resetting...';
+        deleteDatabase("SyllDB").then(() => {
+            window.location.reload();
+        });
+    }
 }
 
 
 function deleteQuestion(i, isRight) {
-appState.score += (isRight ? -1 : 1);
-appState.questions.splice(i, 1);
-save();
-renderHQL();
+    appState.score += (isRight ? -1 : 1);
+    appState.questions.splice(i, 1);
+    save();
+    renderHQL();
 }
 
 function renderHQL(didAddSingleQuestion=false) {
-if (didAddSingleQuestion) {
-    const index = appState.questions.length - 1;
-    const recentQuestion = appState.questions[index];
-    const firstChild = historyList.firstElementChild;
-    historyList.insertBefore(createHQLI(recentQuestion, index), firstChild);
-} else {
-    historyList.innerHTML = "";
+    if (didAddSingleQuestion) {
+        const index = appState.questions.length - 1;
+        const recentQuestion = appState.questions[index];
+        const firstChild = historyList.firstElementChild;
+        historyList.insertBefore(createHQLI(recentQuestion, index), firstChild);
+    } else {
+        historyList.innerHTML = "";
 
-    const len = appState.questions.length;
-    const reverseChronological = appState.questions.slice().reverse();
+        const len = appState.questions.length;
+        const reverseChronological = appState.questions.slice().reverse();
 
-    reverseChronological
-        .map((q, i) => {
-            const el = createHQLI(q, len - i - 1);
-            return el;
-        })
-        .forEach(el => historyList.appendChild(el));
-}
+        reverseChronological
+            .map((q, i) => {
+                const el = createHQLI(q, len - i - 1);
+                return el;
+            })
+            .forEach(el => historyList.appendChild(el));
+    }
 
-updateAverage(appState.questions);
-correctlyAnsweredEl.innerText = appState.score;
-nextLevelEl.innerText = appState.questions.length;
+    updateAverage(appState.questions);
+    correctlyAnsweredEl.innerText = appState.score;
+    nextLevelEl.innerText = appState.questions.length;
 }
 
 function updateAverage(reverseChronological) {
-let questions = reverseChronological.filter(q => q.answeredAt && q.startedAt);
-let times = questions.map(q => (q.answeredAt - q.startedAt) / 1000);
-if (times.length == 0) {
-    return;
-}
-const totalTime = times.reduce((a,b) => a + b, 0);
-const minutes = Math.floor(totalTime / 60);
-const seconds = totalTime % 60;
-totalDisplay.innerHTML = minutes.toFixed(0) + 'm ' + seconds.toFixed(0) + 's';
+    let questions = reverseChronological.filter(q => q.answeredAt && q.startedAt);
+    let times = questions.map(q => (q.answeredAt - q.startedAt) / 1000);
+    if (times.length == 0) {
+        return;
+    }
+    const totalTime = times.reduce((a,b) => a + b, 0);
+    const minutes = Math.floor(totalTime / 60);
+    const seconds = totalTime % 60;
+    totalDisplay.innerHTML = minutes.toFixed(0) + 'm ' + seconds.toFixed(0) + 's';
+    
+    const average =  totalTime / times.length;
+    averageDisplay.innerHTML = average.toFixed(1) + 's';
 
-const average =  totalTime / times.length;
-averageDisplay.innerHTML = average.toFixed(1) + 's';
-
-const correctQuestions = questions.filter(q => q.correctness == 'right');
-const percentCorrect = 100 * correctQuestions.length / questions.length;
-percentCorrectDisplay.innerHTML = percentCorrect.toFixed(1) + '%';
-const correctTimes = correctQuestions.map(q => (q.answeredAt - q.startedAt) / 1000);
-if (correctTimes.length == 0) {
-    averageCorrectDisplay.innerHTML = 'None yet';
-    return;
-}
-const totalTimeBeingCorrect = correctTimes.reduce((a,b) => a + b, 0);
-const averageCorrect = totalTimeBeingCorrect / correctTimes.length;
-averageCorrectDisplay.innerHTML = averageCorrect.toFixed(1) + 's';
+    const correctQuestions = questions.filter(q => q.correctness == 'right');
+    const percentCorrect = 100 * correctQuestions.length / questions.length;
+    percentCorrectDisplay.innerHTML = percentCorrect.toFixed(1) + '%';
+    const correctTimes = correctQuestions.map(q => (q.answeredAt - q.startedAt) / 1000);
+    if (correctTimes.length == 0) {
+        averageCorrectDisplay.innerHTML = 'None yet';
+        return;
+    }
+    const totalTimeBeingCorrect = correctTimes.reduce((a,b) => a + b, 0);
+    const averageCorrect = totalTimeBeingCorrect / correctTimes.length;
+    averageCorrectDisplay.innerHTML = averageCorrect.toFixed(1) + 's';
 }
 
 function createHQLI(question, i) {
-const q = renderJunkEmojis(question);
-const parent = document.createElement("DIV");
+    const q = renderJunkEmojis(question);
+    const parent = document.createElement("DIV");
 
-const answerUser = q.answerUser;
-const answerUserClassName = {
-    'missed': '',
-    'right': answerUser,
-    'wrong': answerUser,
-}[q.correctness];
+    const answerUser = q.answerUser;
+    const answerUserClassName = {
+        'missed': '',
+        'right': answerUser,
+        'wrong': answerUser,
+    }[q.correctness];
+    
+    const answer = q.isValid;
+    let classModifier = {
+        'missed': '',
+        'right': 'hqli--right',
+        'wrong': 'hqli--wrong'
+    }[q.correctness];
+    
+    let answerDisplay = ('' + answer).toUpperCase();
+    let answerUserDisplay = {
+        'missed': '(TIMED OUT)',
+        'right': ('' + answerUser).toUpperCase(),
+        'wrong': ('' + answerUser).toUpperCase()
+    }[q.correctness];
 
-const answer = q.isValid;
-let classModifier = {
-    'missed': '',
-    'right': 'hqli--right',
-    'wrong': 'hqli--wrong'
-}[q.correctness];
+    const htmlPremises = q.premises
+        .map(p => `<div class="hqli-premise">${p}</div>`)
+        .join("\n");
 
-let answerDisplay = ('' + answer).toUpperCase();
-let answerUserDisplay = {
-    'missed': '(TIMED OUT)',
-    'right': ('' + answerUser).toUpperCase(),
-    'wrong': ('' + answerUser).toUpperCase()
-}[q.correctness];
+    const htmlOperations = q.operations ? q.operations.map(o => `<div class="hqli-operation">${o}</div>`).join("\n") : '';
 
-const htmlPremises = q.premises
-    .map(p => `<div class="hqli-premise">${p}</div>`)
-    .join("\n");
-
-const htmlOperations = q.operations ? q.operations.map(o => `<div class="hqli-operation">${o}</div>`).join("\n") : '';
-
-let responseTimeHtml = '';
-if (q.startedAt && q.answeredAt)
-    responseTimeHtml =
+    let responseTimeHtml = '';
+    if (q.startedAt && q.answeredAt)
+        responseTimeHtml =
 `
-    <div class="hqli-response-time">${Math.round((q.answeredAt - q.startedAt) / 1000)} sec</div>
+        <div class="hqli-response-time">${Math.round((q.answeredAt - q.startedAt) / 1000)} sec</div>
 `;
-
-const html =
+    
+    const html =
 `<div class="hqli ${classModifier}">
-<div class="inner">
-    <div class="index"></div>
-    <div class="hqli-premises">
-        <div class="hqli-preamble">Premises</div>
-        ${htmlPremises}
-        ${htmlOperations ? '<div class="hqli-transform-header">Transformations</div>' : ''}
-        ${htmlOperations}
+    <div class="inner">
+        <div class="index"></div>
+        <div class="hqli-premises">
+            <div class="hqli-preamble">Premises</div>
+            ${htmlPremises}
+            ${htmlOperations ? '<div class="hqli-transform-header">Transformations</div>' : ''}
+            ${htmlOperations}
+        </div>
+        <div class="hqli-postamble">Conclusion</div>
+        <div class="hqli-conclusion">${q.conclusion}</div>
+        <div class="hqli-answer-user ${answerUserClassName}">${answerUserDisplay}</div>
+        <div class="hqli-answer ${answer}">${answerDisplay}</div>
+        ${responseTimeHtml}
+        <div class="hqli-footer">
+            <div>${q.category}</div>
+            ${createExplanationButton(q)}
+            <button class="delete">X</button>
+        </div>
     </div>
-    <div class="hqli-postamble">Conclusion</div>
-    <div class="hqli-conclusion">${q.conclusion}</div>
-    <div class="hqli-answer-user ${answerUserClassName}">${answerUserDisplay}</div>
-    <div class="hqli-answer ${answer}">${answerDisplay}</div>
-    ${responseTimeHtml}
-    <div class="hqli-footer">
-        <div>${q.category}</div>
-        ${createExplanationButton(q)}
-        <button class="delete">X</button>
-    </div>
-</div>
 </div>`;
-parent.innerHTML = html;
-parent.querySelector(".index").textContent = i + 1;
-parent.querySelector(".delete").addEventListener('click', () => {
-    deleteQuestion(i, q.correctness === 'right');
-});
-const explanationButton = parent.querySelector(".explanation-button");
-if (explanationButton) {
-    explanationButton.addEventListener('mouseenter', (e) => {
-        createExplanationPopup(q, e);
+    parent.innerHTML = html;
+    parent.querySelector(".index").textContent = i + 1;
+    parent.querySelector(".delete").addEventListener('click', () => {
+        deleteQuestion(i, q.correctness === 'right');
     });
-    explanationButton.addEventListener('mouseleave', () => {
-        removeExplanationPopup();
-    });
-}
-return parent.firstElementChild;
+    const explanationButton = parent.querySelector(".explanation-button");
+    if (explanationButton) {
+        explanationButton.addEventListener('mouseenter', (e) => {
+            createExplanationPopup(q, e);
+        });
+        explanationButton.addEventListener('mouseleave', () => {
+            removeExplanationPopup();
+        });
+    }
+    return parent.firstElementChild;
 }
 
 function toggleLegacyFolder() {
-appState.isLegacyOpen = !appState.isLegacyOpen;
-renderFolders();
-save();
+    appState.isLegacyOpen = !appState.isLegacyOpen;
+    renderFolders();
+    save();
 }
 
 function toggleExperimentalFolder() {
-appState.isExperimentalOpen = !appState.isExperimentalOpen;
-renderFolders();
-save();
+    appState.isExperimentalOpen = !appState.isExperimentalOpen;
+    renderFolders();
+    save();
 }
 
 function renderFolders() {
-renderFolder('legacy-folder-arrow', 'legacy-folder-content', appState.isLegacyOpen);
-renderFolder('experimental-folder-arrow', 'experimental-folder-content', appState.isExperimentalOpen);
+    renderFolder('legacy-folder-arrow', 'legacy-folder-content', appState.isLegacyOpen);
+    renderFolder('experimental-folder-arrow', 'experimental-folder-content', appState.isExperimentalOpen);
 }
 
 function renderFolder(arrowId, contentId, isOpen) {
-const folderArrow = document.getElementById(arrowId);
-const folderContent = document.getElementById(contentId);
-if (isOpen) {
-    folderContent.style.display = 'block';
-    folderArrow.classList.add('open');
-} else {
-    folderContent.style.display = 'none';
-    folderArrow.classList.remove('open');
-}
+    const folderArrow = document.getElementById(arrowId);
+    const folderContent = document.getElementById(contentId);
+    if (isOpen) {
+        folderContent.style.display = 'block';
+        folderArrow.classList.add('open');
+    } else {
+        folderContent.style.display = 'none';
+        folderArrow.classList.remove('open');
+    }
 }
 
 // Events
 timerInput.addEventListener("input", evt => {
-const el = evt.target;
-timerTime = el.value;
-timerCount = findStartingTimerCount();
-el.style.width = (el.value.length + 4) + 'ch';
-savedata.timer = el.value;
-if (timerToggle.checked) {
-    stopCountDown();
-    startCountDown();
-}
-save();
+    const el = evt.target;
+    timerTime = el.value;
+    timerCount = findStartingTimerCount();
+    el.style.width = (el.value.length + 4) + 'ch';
+    savedata.timer = el.value;
+    if (timerToggle.checked) {
+        stopCountDown();
+        startCountDown();
+    }
+    save();
 });
 
 function handleCountDown() {
-timerToggled = timerToggle.checked;
-if (timerToggled)
-    startCountDown();
-else
-    stopCountDown();
+    timerToggled = timerToggle.checked;
+    if (timerToggled)
+        startCountDown();
+    else
+        stopCountDown();
 }
 
 timerToggle.addEventListener("click", evt => {
-handleCountDown();
+    handleCountDown();
 });
 
 let dehoverQueue = [];
 function handleKeyPress(event) {
-const tagName = event.target.tagName.toLowerCase();
-const isEditable = event.target.isContentEditable;
-if (tagName === "button" || tagName === "input" || tagName === "textarea" || isEditable) {
-    return;
-}
-switch (event.code) {
-    case "KeyH":
-        historyButton.click();
-        if (historyCheckbox.checked) {
-            const firstEntry = historyList.firstElementChild;
-            if (firstEntry) {
-                const explanationButton = firstEntry.querySelector(`button.explanation-button`);
-                explanationButton.dispatchEvent(new Event("mouseenter"));
-                dehoverQueue.push(() => {
-                    explanationButton.dispatchEvent(new Event("mouseleave"));
+    const tagName = event.target.tagName.toLowerCase();
+    const isEditable = event.target.isContentEditable;
+    if (tagName === "button" || tagName === "input" || tagName === "textarea" || isEditable) {
+        return;
+    }
+    switch (event.code) {
+        case "KeyH":
+            historyButton.click();
+            if (historyCheckbox.checked) {
+                const firstEntry = historyList.firstElementChild;
+                if (firstEntry) {
+                    const explanationButton = firstEntry.querySelector(`button.explanation-button`);
+                    explanationButton.dispatchEvent(new Event("mouseenter"));
+                    dehoverQueue.push(() => {
+                        explanationButton.dispatchEvent(new Event("mouseleave"));
+                    });
+                }
+            } else {
+                dehoverQueue.forEach(callback => {
+                    callback();
                 });
             }
-        } else {
-            dehoverQueue.forEach(callback => {
-                callback();
-            });
-        }
-        break;
-    case "KeyS":
-        settingsButton.click();
-        break;
-    case "KeyJ":
-    case "Digit1":
-    case "ArrowLeft":
-        checkIfTrue();
-        break;
-    case "KeyK":
-    case "Digit2":
-        
-  case "ArrowRight":
-        checkIfFalse();
-        break;
-    case "Space":
-        timerToggle.checked = !timerToggle.checked;
-        handleCountDown();
-        break;
-    default:
-        break;
-}
+            break;
+        case "KeyS":
+            settingsButton.click();
+            break;
+        case "KeyJ":
+        case "Digit1":
+        case "ArrowLeft":
+            checkIfTrue();
+            break;
+        case "KeyK":
+        case "Digit2":
+            
+      case "ArrowRight":
+            checkIfFalse();
+            break;
+        case "Space":
+            timerToggle.checked = !timerToggle.checked;
+            handleCountDown();
+            break;
+        default:
+            break;
+    }
 }
 
 function clearHistory() {
-const confirmed = confirm("Are you sure? (This will clear the displayed history but preserve data for CSV export)");
-if (confirmed) {
-    // Store the questions in a separate array for CSV export
-    if (!appState.archivedQuestions) {
-        appState.archivedQuestions = [];
+    const confirmed = confirm("Are you sure? (This will clear the displayed history but preserve data for CSV export)");
+    if (confirmed) {
+        // Store the questions in a separate array for CSV export
+        if (!appState.archivedQuestions) {
+            appState.archivedQuestions = [];
+        }
+        
+        // Move current questions to archive instead of deleting them
+        appState.archivedQuestions = [...appState.archivedQuestions, ...appState.questions];
+        
+        // Clear the visible questions and reset the score
+        appState.questions = [];
+        appState.score = 0;
+        
+        save();
+        renderHQL();
     }
-    
-    // Move current questions to archive instead of deleting them
-    appState.archivedQuestions = [...appState.archivedQuestions, ...appState.questions];
-    
-    // Clear the visible questions and reset the score
-    appState.questions = [];
-    appState.score = 0;
-    
-    save();
-    renderHQL();
-}
 }
 
 // Modify the exportHistoryToCSV function to include archived questions
 // Function to strip HTML tags and clean premise text
 function cleanPremiseText(text) {
-// Remove all HTML tags
-const withoutTags = text.replace(/<\/?[^>]+(>|$)/g, "");
-
-// Remove extra whitespace
-const cleanedText = withoutTags.replace(/\s+/g, " ").trim();
-
-return cleanedText;
+    // Remove all HTML tags
+    const withoutTags = text.replace(/<\/?[^>]+(>|$)/g, "");
+    
+    // Remove extra whitespace
+    const cleanedText = withoutTags.replace(/\s+/g, " ").trim();
+    
+    return cleanedText;
 }
 
 // Update the exportHistoryToCSV function to clean premises
 // Function to clean premise text while preserving negated elements
 function cleanPremiseText(text) {
-// Replace negated spans with content in *asterisks* to show they're negated
-let result = text.replace(/<span class="is-negated">(.*?)<\/span>/g, "*$1*");
-
-// Handle subject spans - just keep the content
-result = result.replace(/<span class="subject">(.*?)<\/span>/g, "$1");
-
-// Handle relation spans - just keep the content
-result = result.replace(/<span class="relation">(.*?)<\/span>/g, "$1");
-
-// Handle meta spans - just keep the content
-result = result.replace(/<span class="is-meta">(.*?)<\/span>/g, "$1");
-
-// Remove negation explainer span entirely
-result = result.replace(/<span class="negation-explainer">.*?<\/span>;?/g, "");
-
-// Remove any remaining HTML tags
-result = result.replace(/<\/?[^>]+(>|$)/g, "");
-
-// Clean up multiple spaces and trim
-result = result.replace(/\s+/g, " ").trim();
-
-return result;
+    // Replace negated spans with content in *asterisks* to show they're negated
+    let result = text.replace(/<span class="is-negated">(.*?)<\/span>/g, "*$1*");
+    
+    // Handle subject spans - just keep the content
+    result = result.replace(/<span class="subject">(.*?)<\/span>/g, "$1");
+    
+    // Handle relation spans - just keep the content
+    result = result.replace(/<span class="relation">(.*?)<\/span>/g, "$1");
+    
+    // Handle meta spans - just keep the content
+    result = result.replace(/<span class="is-meta">(.*?)<\/span>/g, "$1");
+    
+    // Remove negation explainer span entirely
+    result = result.replace(/<span class="negation-explainer">.*?<\/span>;?/g, "");
+    
+    // Remove any remaining HTML tags
+    result = result.replace(/<\/?[^>]+(>|$)/g, "");
+    
+    // Clean up multiple spaces and trim
+    result = result.replace(/\s+/g, " ").trim();
+    
+    return result;
 }
 
 // Update the exportHistoryToCSV function
 // Function to clean premise text while preserving negated elements
 function cleanPremiseText(text) {
-// Replace negated spans with content in *asterisks* to show they're negated
-let result = text.replace(/<span class="is-negated">(.*?)<\/span>/g, "*$1*");
-
-// Handle subject spans - just keep the content
-result = result.replace(/<span class="subject">(.*?)<\/span>/g, "$1");
-
-// Handle relation spans - just keep the content
-result = result.replace(/<span class="relation">(.*?)<\/span>/g, "$1");
-
-// Handle meta spans - just keep the content
-result = result.replace(/<span class="is-meta">(.*?)<\/span>/g, "$1");
-
-// Remove negation explainer span entirely
-result = result.replace(/<span class="negation-explainer">.*?<\/span>;?/g, "");
-
-// Remove any remaining HTML tags
-result = result.replace(/<\/?[^>]+(>|$)/g, "");
-
-// Clean up multiple spaces and trim
-result = result.replace(/\s+/g, " ").trim();
-
-return result;
+    // Replace negated spans with content in *asterisks* to show they're negated
+    let result = text.replace(/<span class="is-negated">(.*?)<\/span>/g, "*$1*");
+    
+    // Handle subject spans - just keep the content
+    result = result.replace(/<span class="subject">(.*?)<\/span>/g, "$1");
+    
+    // Handle relation spans - just keep the content
+    result = result.replace(/<span class="relation">(.*?)<\/span>/g, "$1");
+    
+    // Handle meta spans - just keep the content
+    result = result.replace(/<span class="is-meta">(.*?)<\/span>/g, "$1");
+    
+    // Remove negation explainer span entirely
+    result = result.replace(/<span class="negation-explainer">.*?<\/span>;?/g, "");
+    
+    // Remove any remaining HTML tags
+    result = result.replace(/<\/?[^>]+(>|$)/g, "");
+    
+    // Clean up multiple spaces and trim
+    result = result.replace(/\s+/g, " ").trim();
+    
+    return result;
 }
 
 function exportHistoryToCSV() {
-// Combine current and archived questions for export
-const allQuestions = [...(appState.archivedQuestions || []), ...appState.questions];
-
-if (allQuestions.length === 0) {
-    alert("No history to export.");
-    return;
-}
-
-// 1. Prepare CSV Header
-const csvHeader = [
-    "Profile",
-    "Category",
-    "Type",
-    "Number of Premises",
-    "Premises",
-    "Conclusion",
-    "User Answer",
-    "Correct Answer",
-    "Response Time (s)",
-    "Timer On",
-    "Timestamp"
-].join(",") + "\n";
-
-// 2. Format Data to CSV
-const csvRows = allQuestions.map(question => {
-
-    const profileName = (question.profileName || "Default").replace(/"/g, '""');
+    // Combine current and archived questions for export
+    const allQuestions = [...(appState.archivedQuestions || []), ...appState.questions];
     
-    const category = question.category.replace(/"/g, '""');
-    const type = question.type;
-    const numPremises = question.premises.length;
-    
-    // Clean each premise but preserve negation with *asterisks*
-    const cleanedPremises = question.premises
-        .map(premise => cleanPremiseText(premise))
-        .join(" | ")
-        .replace(/"/g, '""');
-        
-    const cleanedConclusion = cleanPremiseText(question.conclusion).replace(/"/g, '""');
-    const userAnswer = question.answerUser === undefined ? "MISSED" : (question.answerUser ? "TRUE" : "FALSE");
-    const correctAnswer = question.isValid ? "TRUE" : "FALSE";
-    const responseTime = question.timeElapsed !== undefined ? (question.timeElapsed / 1000).toFixed(2) : "";
-    const timerOn = question.timerWasRunning === true ? "TRUE" : "FALSE";
-    
-    // Convert timestamp to human-readable format without milliseconds
-    let formattedTimestamp = "";
-    if (question.startedAt) {
-        const date = new Date(question.startedAt);
-        const year = date.getFullYear();
-        const month = String(date.getMonth() + 1).padStart(2, '0');
-        const day = String(date.getDate()).padStart(2, '0');
-        const hours = String(date.getHours()).padStart(2, '0');
-        const minutes = String(date.getMinutes()).padStart(2, '0');
-        const seconds = String(date.getSeconds()).padStart(2, '0');
-        formattedTimestamp = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+    if (allQuestions.length === 0) {
+        alert("No history to export.");
+        return;
     }
     
-    return `"${profileName}","${category}","${type}","${numPremises}","${cleanedPremises}","${cleanedConclusion}","${userAnswer}","${correctAnswer}","${responseTime}","${timerOn}","${formattedTimestamp}"`;
-});
+    // 1. Prepare CSV Header
+    const csvHeader = [
+        "Profile",
+        "Category",
+        "Type",
+        "Number of Premises",
+        "Premises",
+        "Conclusion",
+        "User Answer",
+        "Correct Answer",
+        "Response Time (s)",
+        "Timer On",
+        "Timestamp"
+    ].join(",") + "\n";
+    
+    // 2. Format Data to CSV
+    const csvRows = allQuestions.map(question => {
 
-// 3. Combine Header and Rows
-const csvContent = csvHeader + csvRows.join("\n");
-
-// 4. Create Download Link (Data URL)
-const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-const url = URL.createObjectURL(blob);
-
-// 5. Create and Trigger Download
-const link = document.createElement("a");
-link.setAttribute("href", url);
-link.setAttribute("download", "syllogimous_v3_history.csv");
-link.style.visibility = 'hidden';
-document.body.appendChild(link);
-link.click();
-document.body.removeChild(link);
-URL.revokeObjectURL(url); // release the object URL
+        const profileName = (question.profileName || "Default").replace(/"/g, '""');
+        
+        const category = question.category.replace(/"/g, '""');
+        const type = question.type;
+        const numPremises = question.premises.length;
+        
+        // Clean each premise but preserve negation with *asterisks*
+        const cleanedPremises = question.premises
+            .map(premise => cleanPremiseText(premise))
+            .join(" | ")
+            .replace(/"/g, '""');
+            
+        const cleanedConclusion = cleanPremiseText(question.conclusion).replace(/"/g, '""');
+        const userAnswer = question.answerUser === undefined ? "MISSED" : (question.answerUser ? "TRUE" : "FALSE");
+        const correctAnswer = question.isValid ? "TRUE" : "FALSE";
+        const responseTime = question.timeElapsed !== undefined ? (question.timeElapsed / 1000).toFixed(2) : "";
+        const timerOn = question.timerWasRunning === true ? "TRUE" : "FALSE";
+        
+        // Convert timestamp to human-readable format without milliseconds
+        let formattedTimestamp = "";
+        if (question.startedAt) {
+            const date = new Date(question.startedAt);
+            const year = date.getFullYear();
+            const month = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
+            const hours = String(date.getHours()).padStart(2, '0');
+            const minutes = String(date.getMinutes()).padStart(2, '0');
+            const seconds = String(date.getSeconds()).padStart(2, '0');
+            formattedTimestamp = `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+        }
+        
+        return `"${profileName}","${category}","${type}","${numPremises}","${cleanedPremises}","${cleanedConclusion}","${userAnswer}","${correctAnswer}","${responseTime}","${timerOn}","${formattedTimestamp}"`;
+    });
+    
+    // 3. Combine Header and Rows
+    const csvContent = csvHeader + csvRows.join("\n");
+    
+    // 4. Create Download Link (Data URL)
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    
+    // 5. Create and Trigger Download
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", "syllogimous_v3_history.csv");
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url); // release the object URL
 }
 
 async function renderDailyProgress() {
-try {
     const data = await getAllRRTProgress();
-    // Check if data is null or empty
-    if (!data) {
-        console.warn("No progress data found."); // Helpful for debugging
-        dailyProgressBar.style.height = "0%";
-        dailyProgressLabel.textContent = "No Data"; // Indicate no data
-        return;
-    }
-
     const profile = PROFILE_STORE.current();
     if (!profile || !savedata.autoProgression) {
-        dailyProgressBar.style.height = "0%";
-        dailyProgressLabel.textContent = "Daily Goal Off";
-        return;
+      dailyProgressBar.style.height = "0%";
+    //   dailyProgressLabel.textContent = "Daily Goal Off"
+      return;
     }
     const now = new Date();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()); // Midnight today
@@ -1227,76 +1340,92 @@ try {
     }
 
     const totalSecondsToday = calculateDailyProgress(data);
-    const goalSeconds = savedata.autoProgressionGoal * 60;  // Convert goal minutes to seconds.
+    const goalSeconds = appState.dailyTimeGoal;
     const progressPercent = Math.min(100, (totalSecondsToday / goalSeconds) * 100);
 
     dailyProgressBar.style.height = `${progressPercent}%`;
-    dailyProgressLabel.textContent = `${Math.floor(totalSecondsToday / 60)} / ${savedata.autoProgressionGoal} min`;
-} catch (error) {
-    console.error("Error in renderDailyProgress:", error);
-    dailyProgressBar.style.height = "0%";
-    dailyProgressLabel.textContent = "Error"; // Indicate an error
+    // dailyProgressLabel.textContent = `${Math.floor(totalSecondsToday / 60)} / ${savedata.autoProgressionGoal} min`;
 }
+
+function calculateDailyProgress(data) {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    const today = `${year}-${month}-${day}`;
+
+    let totalTimeToday = 0;  // In seconds
+    for (const question of data) {
+        if (question.timerWasRunning && question.timestamp) {
+            const qDate = new Date(question.timestamp);
+            const qYear = qDate.getFullYear();
+            const qMonth = String(qDate.getMonth() + 1).padStart(2, '0');
+            const qDay = String(qDate.getDate()).padStart(2, '0');
+            const questionDay = `${qYear}-${qMonth}-${qDay}`;
+
+            if (questionDay === today) {
+                totalTimeToday += question.timeElapsed / 1000; // Convert to seconds
+            }
+        }
+    }
+
+    return totalTimeToday;
 }
 
 async function renderWeeklyProgress() {
-const data = await getAllRRTProgress();
-const profile = PROFILE_STORE.current();
-if (!profile || !savedata.autoProgression) {
-  weeklyProgressBar.style.height = "0%";
-  weeklyProgressLabel.textContent = "Weekly Goal Off"
-  return;
+    const data = await getAllRRTProgress();
+    const profile = PROFILE_STORE.current();
+    if (!profile || !savedata.autoProgression) {
+      weeklyProgressBar.style.height = "0%";
+    //   weeklyProgressLabel.textContent = "Weekly Goal Off"
+      return;
+    }
+    const now = new Date();
+    const startOfWeek = new Date(now); // Clone current date
+    startOfWeek.setHours(0, 0, 0, 0);   // Start of current day
+    const dayOfWeek = startOfWeek.getDay(); // 0 = Sunday, 1 = Monday, ...
+    const diff = startOfWeek.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1); // adjust when day is sunday
+    startOfWeek.setDate(diff); // First day of the week (Sunday)
+
+    // Check if the last update was before this week.
+    if (!appState.lastProgressUpdate || new Date(appState.lastProgressUpdate) < startOfWeek) {
+        appState.lastProgressUpdate = startOfWeek.getTime();  // Use start of week.
+        save();
+        console.log("Weekly progress reset.");
+    }
+    const totalSecondsThisWeek = calculateWeeklyProgress(data);
+    const goalSeconds = savedata.weeklyTimeGoal;  //  Use appState
+    const progressPercent = Math.min(100, (totalSecondsThisWeek / goalSeconds) * 100);
+
+    weeklyProgressBar.style.height = `${progressPercent}%`;
+    //weeklyProgressLabel.textContent = `${Math.floor(totalSecondsThisWeek / 60)} / ${savedata.autoProgressionGoal * 7} min`;
 }
-const now = new Date();
-const startOfWeek = new Date(now); // Clone current date
-startOfWeek.setHours(0, 0, 0, 0);   // Start of current day
-const dayOfWeek = startOfWeek.getDay(); // 0 = Sunday, 1 = Monday, ...
-const diff = startOfWeek.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1); // adjust when day is sunday
-startOfWeek.setDate(diff); // First day of the week (Sunday)
 
-// Check if the last update was before this week.
-if (!appState.lastProgressUpdate || new Date(appState.lastProgressUpdate) < startOfWeek) {
-    appState.lastProgressUpdate = startOfWeek.getTime();  // Use start of week.
-    save();
-    console.log("Weekly progress reset.");
-}
 
-const totalSecondsThisWeek = calculateWeeklyProgress(data);
-const goalSeconds = savedata.autoProgressionGoal * 60 * 7;  // 7 days a week
-const progressPercent = Math.min(100, (totalSecondsThisWeek / goalSeconds) * 100);
-
-weeklyProgressBar.style.height = `${progressPercent}%`;
-weeklyProgressLabel.textContent = `${Math.floor(totalSecondsThisWeek / 60)} / ${savedata.autoProgressionGoal * 7} min`;
-}
-
-// Function to calculate total timed quest answered for week.
 function calculateWeeklyProgress(data) {
-const now = new Date();
-const startOfWeek = new Date(now); // Clone current date
-startOfWeek.setHours(0, 0, 0, 0);   // Start of current day
-const dayOfWeek = startOfWeek.getDay(); // 0 = Sunday, 1 = Monday, ...
-const diff = startOfWeek.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1); // adjust when day is sunday
-startOfWeek.setDate(diff); // First day of the week (Sunday)
-// Clone startofWeek and find the next sunday
-let endOfWeek = new Date(startOfWeek);
-endOfWeek.setDate(startOfWeek.getDate() + 7);
+    const now = new Date();
+    const startOfWeek = new Date(now);
+    startOfWeek.setHours(0, 0, 0, 0);
+    startOfWeek.setDate(now.getDate() - now.getDay()); // Start of current week (Sunday)
 
-let totalTimeThisWeek = 0;
-for (const question of data) {
-    if (question.timerWasRunning && question.timestamp) {
-        const qDate = new Date(question.timestamp);
-        if (qDate >= startOfWeek && qDate < endOfWeek) {
-            totalTimeThisWeek += question.timeElapsed / 1000;
+    const endOfWeek = new Date(startOfWeek);
+    endOfWeek.setDate(startOfWeek.getDate() + 7);
+
+    let totalTimeThisWeek = 0;
+    for (const question of data) {
+        if (question.timerWasRunning && question.timestamp) {
+            const qDate = new Date(question.timestamp);
+            if (qDate >= startOfWeek && qDate < endOfWeek) {
+                totalTimeThisWeek += question.timeElapsed / 1000;
+            }
         }
     }
-}
-return totalTimeThisWeek;
+    return totalTimeThisWeek;
 }
 
-// Listen for the content to load then initialize the app - new order, load before init (fixes a profile loading bug);
 document.addEventListener("DOMContentLoaded", () => {
-load();
-switchButtons();
-init();
-updateCustomStyles();
+   load();
+   switchButtons();
+   init(); // Call the main initialization function
+   updateCustomStyles();
 });

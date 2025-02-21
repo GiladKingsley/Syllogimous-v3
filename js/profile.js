@@ -79,6 +79,12 @@ class ProfileStore {
 
     handleProfileChange() {
         this.syncProfileChange();
+        savedata = this.current().savedata;
+    
+        // *** CORRECTED: Update appState from savedata ***
+        appState.dailyTimeGoal = savedata.dailyTimeGoal ?? 600;  // Use saved value, or default
+        appState.weeklyTimeGoal = savedata.weeklyTimeGoal ?? 4200; // Use saved value, or default
+    
         populateSettings();
         init();
     }

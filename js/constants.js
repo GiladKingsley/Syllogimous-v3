@@ -15,6 +15,9 @@ let appState = {
     "sfx": "none",
     "fastUi": false,
     "staticButtons": false,
+    "lastProgressUpdate": null,
+    "dailyTimeGoal": 600,  // Default: 10 minutes (in seconds)
+    "weeklyTimeGoal": 4200, // Default: 70 minutes (in seconds)
 };
 
 let savedata = {
